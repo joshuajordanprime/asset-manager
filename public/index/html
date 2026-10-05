@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Asset Manager</title>
+<style>
+:root{--bg:#f2f1ee;--panel:#fff;--ink:#241f2e;--muted:#675f73;--line:#ddd9e2;--accent:#5b3fa8;
+--use:#1f7a5a;--store:#2b6cb0;--repair:#b7791f;--retired:#675f73;--bad:#b83a3a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
+header{display:flex;align-items:center;gap:1rem;padding:.9rem 1.5rem;background:var(--ink);color:#fff}
+header h1{font-size:1.15rem;margin:0;flex:1}header button{background:none;border:1px solid #ffffff55;color:#fff}
+main{max-width:940px;margin:1.5rem auto;padding:0 1rem}
+button,input,select,textarea{font:inherit}
+button{padding:.5rem .9rem;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+:focus-visible{outline:3px solid #b9a6ee;outline-offset:1px}
+input,select,textarea{width:100%;padding:.55rem .65rem;border:1px solid var(--line);border-radius:6px;background:#fff}
+label{display:block;font-size:.9rem;color:var(--muted);margin:.7rem 0 .2rem}
+.auth{max-width:380px;margin:12vh auto;background:var(--panel);padding:1.75rem;border-radius:10px;border:1px solid var(--line)}
+.auth h2{margin-top:0}.auth>button.primary{width:100%;margin-top:1rem}
+.err{color:var(--bad);min-height:1.4em;margin:.6rem 0 0;font-size:.92rem}
+.bar{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin-bottom:1rem}.bar input{width:200px}.bar select{width:auto}.spacer{flex:1}
+.tabs button{border:none;background:none;border-bottom:3px solid transparent;border-radius:0;padding:.4rem .2rem;margin-right:1rem}
+.tabs button[aria-current=true]{border-color:var(--accent);font-weight:600}
+.asset{display:grid;grid-template-columns:6px 1fr auto;gap:.9rem;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:.7rem 1rem .7rem 0;margin-bottom:.6rem;align-items:center;overflow:hidden}
+.asset .stripe{align-self:stretch}.asset h3{margin:0;font-size:1.02rem}.asset p{margin:.15rem 0 0;color:var(--muted);font-size:.88rem}
+.bad{color:var(--bad);font-weight:600}.warn{color:var(--repair);font-weight:600}
+.actions button{padding:.3rem .6rem;font-size:.88rem;margin-left:.25rem}
+.empty{padding:2.5rem 1rem;text-align:center;color:var(--muted);background:var(--panel);border:1px dashed var(--line);border-radius:8px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.7rem;margin-bottom:1.2rem}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:.8rem 1rem}
+.stat b{display:block;font-size:1.6rem}.stat span{color:var(--muted);font-size:.9rem}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:.8rem 1rem;margin-bottom:1rem}
+dialog{border:none;border-radius:10px;padding:1.4rem;width:min(520px,94vw);max-height:92vh}dialog::backdrop{background:#0008}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:.7rem}.dlg-actions{display:flex;gap:.5rem;justify-content:flex-end;margin-top:1rem}
+.hist{font-size:.88rem;color:var(--muted);margin:.2rem 0}
+</style>
+</head>
+<body>
+<div id="root"></div><dialog id="dlg"></dialog>
+<script>
+const STATUSES=['In Use','In Storage','In Repair','Retired'],CATS=['Laptop','Desktop','Phone','Monitor','Network','Software License','Other'];
+const COLOR={'In Use':'var(--use)','In Storage':'var(--store)','In Repair':'var(--repair)','Retired':'var(--retired)'};
+const $=(s)=>document.querySelector(s);
+const esc=(s)=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money=(n)=>'$'+Number(n||0).toLocaleString(undefined,{maximumFractionDigits:0});
+const today=()=>new Date().toISOString().slice(0,10);
+const days=(d)=>Math.round((new Date(d)-new Date(today()))/864e5);
+let token=localStorage.getItem('am_token'),view='assets',mode='login',assets=[],f={status:'',category:'',q:''};
+
+async function api(path,opts={}){
+  const res=await fetch('/api/'+path,{...opts,headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:opts.body?JSON.stringify(opts.body):undefined});
+  const data=res.headers.get('content-type')?.includes('json')?await res.json():await res.text();
+  if(res.status===401&&token){logout();throw new Error('Session expired.')}
+  if(!res.ok)throw new Error(data.error||'Something went wrong.');
+  return data;
+}
+function logout(){token=null;localStorage.removeItem('am_token');renderAuth()}
+
+function renderAuth(){
+  const su=mode==='signup';
+  $('#root').innerHTML=`<form class="auth" id="af"><h2>${su?'Create your account':'Log in to Asset Manager'}</h2>
+  <label for="email">Email</label><input id="email" type="email" required autocomplete="email">
+  <label for="pw">Password${su?' (8+ characters)':''}</label><input id="pw" type="password" required minlength="${su?8:1}" autocomplete="${su?'new-password':'current-password'}">
+  <p class="err" id="err" role="alert"></p><button class="primary">${su?'Create account':'Log in'}</button>
+  <p style="text-align:center"><button type="button" id="swap" style="border:none;background:none;color:var(--accent)">${su?'I already have an account':'Create an account'}</button></p></form>`;
+  $('#swap').onclick=()=>{mode=su?'login':'signup';renderAuth()};
+  $('#af').onsubmit=async(e)=>{e.preventDefault();try{const r=await api(su?'signup':'login',{method:'POST',body:{email:$('#email').value,password:$('#pw').value}});token=r.token;localStorage.setItem('am_token',token);view='assets';load()}catch(x){$('#err').textContent=x.message}};
+}
+
+function shell(inner){
+  $('#root').innerHTML=`<header><h1>Asset Manager</h1><button id="out">Log out</button></header><main>
+  <nav class="tabs"><button data-v="assets" aria-current="${view==='assets'}">Assets</button><button data-v="stats" aria-current="${view==='stats'}">Overview</button></nav><div style="height:1rem"></div>${inner}</main>`;
+  $('#out').onclick=logout;
+  document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{view=b.dataset.v;view==='stats'?renderStats():load()});
+}
+
+async function load(){
+  const p=new URLSearchParams(Object.entries(f).filter(([,v])=>v));
+  try{assets=await api('assets'+(p.toString()?'?'+p:''));renderAssets()}catch{}
+}
+
+function warranty(a){
+  if(!a.warranty_expiry||a.status==='Retired')return '';
+  const d=days(a.warranty_expiry);
+  return d<0?` · <span class="bad">Warranty expired</span>`:d<=60?` · <span class="warn">Warranty ends in ${d} days</span>`:` · Warranty to ${a.warranty_expiry}`;
+}
+
+function renderAssets(){
+  const opt=(list,cur,all)=>`<option value="">${all}</option>`+list.map(o=>`<option ${o===cur?'selected':''}>${o}</option>`).join('');
+  const list=assets.map(a=>`<article class="asset"><div class="stripe" style="background:${COLOR[a.status]}"></div>
+  <div><h3>${esc(a.name)} <span style="font-weight:400;color:var(--muted)">${a.category}</span></h3>
+  <p><b style="color:${COLOR[a.status]}">${a.status}</b> · ${a.assigned_to?'Assigned to '+esc(a.assigned_to):'Unassigned'}${a.serial?' · S/N '+esc(a.serial):''}${warranty(a)}</p></div>
+  <div class="actions"><button data-edit="${a.id}">Edit</button><button data-del="${a.id}">Delete</button></div></article>`).join('');
+  shell(`<div class="bar"><input id="q" type="search" placeholder="Search name, serial, person" value="${esc(f.q)}" aria-label="Search">
+  <select id="fs" aria-label="Status">${opt(STATUSES,f.status,'All statuses')}</select><select id="fc" aria-label="Category">${opt(CATS,f.category,'All categories')}</select>
+  <span class="spacer"></span><button id="csv">Export CSV</button><button class="primary" id="add">Add asset</button></div>
+  ${list||`<div class="empty">${Object.values(f).some(Boolean)?'No assets match these filters.':'No assets yet. Add your first piece of equipment to start tracking.'}</div>`}`);
+  $('#fs').onchange=(e)=>{f.status=e.target.value;load()};$('#fc').onchange=(e)=>{f.category=e.target.value;load()};
+  let t;$('#q').oninput=(e)=>{clearTimeout(t);t=setTimeout(async()=>{f.q=e.target.value;await load();const q=$('#q');q.focus();q.setSelectionRange(q.value.length,q.value.length)},300)};
+  $('#add').onclick=()=>openForm();
+  $('#csv').onclick=async()=>{const x=await api('export.csv');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([x],{type:'text/csv'}));a.download='assets.csv';a.click()};
+  document.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>openForm(assets.find(a=>a.id==b.dataset.edit)));
+  document.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{if(confirm('Delete this asset and its history?')){await api('assets/'+b.dataset.del,{method:'DELETE'});load()}});
+}
+
+async function openForm(a={}){
+  const v=(k,d='')=>esc(a[k]??d);
+  const hist=a.id?await api(`assets/${a.id}/history`).catch(()=>[]):[];
+  $('#dlg').innerHTML=`<form id="form"><h2 style="margin-top:0">${a.id?'Edit asset':'Add asset'}</h2>
+  <label for="name">Name</label><input id="name" required value="${v('name')}" placeholder="e.g. Dell Latitude 7440">
+  <div class="row"><div><label for="cat">Category</label><select id="cat">${CATS.map(c=>`<option ${a.category===c?'selected':''}>${c}</option>`).join('')}</select></div>
+  <div><label for="st">Status</label><select id="st">${STATUSES.map(s=>`<option ${(a.status||'In Storage')===s?'selected':''}>${s}</option>`).join('')}</select></div></div>
+  <div class="row"><div><label for="ser">Serial number</label><input id="ser" value="${v('serial')}"></div><div><label for="as">Assigned to</label><input id="as" value="${v('assigned_to')}" placeholder="Person or team"></div></div>
+  <div class="row"><div><label for="pd">Purchased</label><input id="pd" type="date" value="${v('purchase_date')}"></div><div><label for="we">Warranty expires</label><input id="we" type="date" value="${v('warranty_expiry')}"></div></div>
+  <label for="cost">Cost ($)</label><input id="cost" type="number" min="0" step="0.01" value="${v('cost','')}">
+  <label for="notes">Notes</label><textarea id="notes" rows="2">${v('notes')}</textarea>
+  ${hist.length?`<h3>History</h3>${hist.map(h=>`<div class="hist">${new Date(h.created_at.replace(' ','T')+'Z').toLocaleDateString()} · ${esc(h.change)}</div>`).join('')}`:''}
+  <p class="err" id="ferr" role="alert"></p><div class="dlg-actions"><button type="button" id="cancel">Cancel</button><button class="primary">Save changes</button></div></form>`;
+  $('#cancel').onclick=()=>$('#dlg').close();
+  $('#form').onsubmit=async(e)=>{e.preventDefault();
+    const body={name:$('#name').value,category:$('#cat').value,status:$('#st').value,serial:$('#ser').value,assigned_to:$('#as').value,purchase_date:$('#pd').value,warranty_expiry:$('#we').value,cost:$('#cost').value,notes:$('#notes').value};
+    try{await api('assets'+(a.id?'/'+a.id:''),{method:a.id?'PUT':'POST',body});$('#dlg').close();load()}catch(x){$('#ferr').textContent=x.message}};
+  $('#dlg').showModal();
+}
+
+async function renderStats(){
+  try{const s=await api('stats');const card=(n,l,c)=>`<div class="stat"><b ${c?`style="color:${c}"`:''}>${n}</b><span>${l}</span></div>`;
+    shell(`<div class="stats">${card(s.activeCount,'Active assets')}${card(money(s.activeValue),'Value of active assets')}${card(s.expiring.length,'Warranties ending in 60 days',s.expiring.length?'var(--repair)':'')}${card(s.expired,'Warranties expired',s.expired?'var(--bad)':'')}</div>
+    <h3>By status</h3><div class="stats">${STATUSES.map(k=>card(s.byStatus[k],k,COLOR[k])).join('')}</div>
+    <h3>By category</h3><div class="stats">${CATS.map(k=>card(s.byCategory[k],k)).join('')}</div>
+    <h3>Warranties ending soon</h3><div class="box">${s.expiring.length?s.expiring.map(x=>`<div>${esc(x.name)} · ${x.warranty_expiry} (${days(x.warranty_expiry)} days)</div>`).join(''):'<span style="color:var(--muted)">Nothing expiring in the next 60 days.</span>'}</div>`)}catch{}
+}
+token?load():renderAuth();
+</script>
+</body>
+</html>
