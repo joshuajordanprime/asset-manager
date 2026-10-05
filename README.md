@@ -1,5 +1,7 @@
 # IT Asset Manager
 
+Joshua Jordan 12 - 5 - 2026
+
 A full-stack web app for tracking IT equipment: what you own, who has it, what condition it's in, and when warranties run out.
 
 ## Features
